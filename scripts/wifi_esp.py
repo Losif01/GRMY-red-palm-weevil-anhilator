@@ -4,55 +4,61 @@ from datetime import datetime
 
 import websockets
 
-ESP32_IP = "10.38.50.20"
-WS_URL = f"ws://{ESP32_IP}:81/"
-current_time = datetime.now().strftime("%H:%M")
-
-
+# Audio configuration
+SAMPLE_RATE = 8000
 RECORD_SECONDS = 30
-SAMPLE_RATE = 8000  # do not change!
-OUTPUT_FILE = f"{current_time}_esp32_buffered_audio@{ESP32_IP}.wav"
+TARGET_BYTES = SAMPLE_RATE * RECORD_SECONDS * 2  # 480,000 bytes
 
 
-async def record_wave():
-    print(f"Connecting to ESP32 at {WS_URL}...")
+async def handle_connection(websocket):
+    print("\n🟢 ESP32 Connected! Starting 30-second recording...")
 
-    # We are tracking total BYTES now.
-    # 8000 samples/sec * 30 seconds = 240,000 samples.
-    # Each sample is a 16-bit integer (2 bytes).
-    # So we need exactly 480,000 bytes.
-    TARGET_BYTES = SAMPLE_RATE * RECORD_SECONDS * 2
+    audio_frames = bytearray()
 
     try:
-        async with websockets.connect(WS_URL, max_size=None) as websocket:
-            print(f"Connected! Collecting {TARGET_BYTES} bytes of audio. Keep quiet...")
+        # Read the binary stream chunk by chunk
+        async for message in websocket:
+            audio_frames.extend(message)
 
-            audio_frames = bytearray()  # A highly efficient binary array
+            # Progress tracker (prints every 1 second of audio)
+            if len(audio_frames) % (SAMPLE_RATE * 2) == 0:
+                seconds = len(audio_frames) // (SAMPLE_RATE * 2)
+                print(f"Recorded {seconds}/{RECORD_SECONDS} seconds...")
 
-            while len(audio_frames) < TARGET_BYTES:
-                # Receive the chunk of 500 samples (1000 bytes)
-                chunk = await websocket.recv()
-                audio_frames.extend(chunk)
+            # Stop listening once we hit our target duration
+            if len(audio_frames) >= TARGET_BYTES:
+                print("\n✅ Reached 30 seconds of audio. Processing...")
+                break
 
-                # Progress tracker
-                if len(audio_frames) % (SAMPLE_RATE * 2) == 0:
-                    seconds = len(audio_frames) // (SAMPLE_RATE * 2)
-                    print(f"Recorded {seconds}/{RECORD_SECONDS} seconds...")
+        # Save the file if we got enough data
+        if len(audio_frames) >= TARGET_BYTES:
+            # Trim to exactly 480,000 bytes in case the last chunk overshot slightly
+            exact_frames = audio_frames[:TARGET_BYTES]
 
-            print(f"\nRecording complete. Saved exactly 30 seconds of audio.")
+            timestamp = datetime.now().strftime("%H-%M-%S")
+            output_filename = f"esp32_test_{timestamp}.wav"
 
-            # Save the raw binary array straight to the .wav file
-            with wave.open(OUTPUT_FILE, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
+            with wave.open(output_filename, "wb") as wav_file:
+                wav_file.setnchannels(1)  # Mono audio
+                wav_file.setsampwidth(2)  # 16-bit integer
                 wav_file.setframerate(SAMPLE_RATE)
-                wav_file.writeframes(audio_frames)
+                wav_file.writeframes(exact_frames)
 
-            print("Done! Try playing it now.")
+            print(f"🎉 Success! Audio saved to: {output_filename}")
 
-    except Exception as e:
-        print(f"Connection failed: {e}")
+            # Close connection so the ESP32 knows to go back to sleep (or restart loop)
+            await websocket.close()
+
+    except websockets.exceptions.ConnectionClosed:
+        print("🔴 ESP32 Disconnected prematurely.")
+
+
+async def main():
+    print("🚀 Starting mock WebSocket server on ws://0.0.0.0:8000")
+    print("Waiting for ESP32 to connect...")
+    async with websockets.serve(handle_connection, "0.0.0.0", 8000):
+        await asyncio.Future()
 
 
 if __name__ == "__main__":
-    asyncio.run(record_wave())
+    asyncio.run(main())
