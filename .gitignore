@@ -30,3 +30,5 @@ uploads/
 *.log
 all_team_code.txt
 app/AI_model/.ipynb_checkpoints/
+scripts/something
+app/AI_model/recordings sample 10_second/
