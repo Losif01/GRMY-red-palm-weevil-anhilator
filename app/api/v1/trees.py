@@ -1,6 +1,8 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
@@ -129,4 +131,48 @@ def delete_tree(
 
     return {
         "message": f"Tree '{tree.custom_name}' has been deleted successfully.",
+    }
+
+
+# A simple schema for the ESP32 payload
+class TreeStatusUpdate(BaseModel):
+    battery_level: str = "OK"
+
+
+@router.put("/{tree_id}/status")
+def update_tree_status(
+    tree_id: str, status_data: TreeStatusUpdate, db: Session = Depends(get_db)
+):
+    try:
+        tree_uid = uuid.UUID(tree_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid tree_id")
+
+    tree = tree_crud.get_tree_by_id_only(db, tree_uid)
+    if not tree:
+        raise HTTPException(status_code=404, detail="Tree not found")
+
+    print(
+        f"\n💓 HEARTBEAT: Tree {tree.custom_name or tree_id} is awake! Battery: {status_data.battery_level}"
+    )
+
+    # 1. Update heartbeat and battery
+    tree.current_status = "ONLINE"
+    tree.battery_status = status_data.battery_level
+
+    # 2. Calculate the next reading time based on the group's interval
+    # (Assuming group has a reading_interval_minutes, defaulting to 60 if not)
+    interval = 60
+    if tree.group_id:
+        group = group_crud.get_group_by_id_only(db, tree.group_id)
+        if group and group.reading_interval_minutes:
+            interval = group.reading_interval_minutes
+
+    tree.next_reading_at = datetime.now(timezone.utc) + timedelta(minutes=interval)
+
+    db.commit()
+
+    return {
+        "message": "Status updated successfully",
+        "sleep_interval_minutes": interval,
     }
