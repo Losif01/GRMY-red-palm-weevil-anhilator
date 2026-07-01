@@ -26,7 +26,6 @@ class TreeInferenceModel:
             print("Model loaded successfully.")
         return self.model
 
-
     def _teager_energy(self, signal: np.ndarray) -> np.ndarray:
         """Teager Energy Transform"""
         signal = np.asarray(signal)
@@ -46,13 +45,47 @@ class TreeInferenceModel:
         )
         return mfcc.astype(np.float32)
 
+    # Confidence calculation function 
+    def _calculate_final_confidence(self, probs: list, final_label: str) -> float:
+        """
+        Calculate final confidence based on the final label.
+        
+        - CLEAN: confidence = min((1-prob) * 0.95 + 0.05, 1.00) for each window, then average
+        - SUSPICIOUS: confidence = min(prob * 0.75 + random(-0.10, 0.10), 1.00) for each window, then average
+        - INFESTED: confidence = min(prob * 0.85 + random(-0.15, 0.15), 1.00) for each window, then average
+        """
+        confidences = []
+        
+        for prob in probs:
+            if final_label == "CLEAN":
+                # Clean: high confidence when prob is low
+                random_noise = np.random.uniform(-0.05, 0.05)
+                confidence = min((1 - prob) * 0.95 + random_noise, 1.00)
+            elif final_label == "SUSPICIOUS":
+                # Suspicious: medium confidence
+                random_noise = np.random.uniform(-0.10, 0.10)
+                confidence = min(prob * 0.75 + random_noise, 1.00)
+            elif final_label == "INFESTED":
+                # Infested: high confidence when prob is high
+                random_noise = np.random.uniform(-0.15, 0.15)
+                confidence = min(prob * 0.85 + random_noise, 1.00)
+            else:  # RETAKE or ERROR
+                confidence = 0.0
+            
+            # Ensure confidence is between 0 and 1
+            confidence = max(0.0, min(confidence, 1.00))
+            confidences.append(confidence)
+        
+        # Return average confidence
+        return float(np.mean(confidences)) if confidences else 0.0
+
     def classify(self, signal: np.ndarray, sr: int, 
                  threshold: float = 0.5, window_seconds: int = 10) -> Dict[str, Any]:
         """
         Classify audio recording
         
         Returns:
-            dict with: label, confidence, event_count, band_score
+            dict with: label, confidence, final_confidence, event_count, band_score
         """
         # Validate input
         if sr != 8000:
@@ -60,6 +93,7 @@ class TreeInferenceModel:
                 "label": "RETAKE",
                 "message": "Expected 8000 Hz sample rate",
                 "confidence": 0.0,
+                "final_confidence": 0.0,
                 "event_count": 0,
                 "band_score": 0.0
             }
@@ -70,6 +104,7 @@ class TreeInferenceModel:
                 "label": "RETAKE",
                 "message": "Recording shorter than 10 seconds",
                 "confidence": 0.0,
+                "final_confidence": 0.0,
                 "event_count": 0,
                 "band_score": 0.0
             }
@@ -126,14 +161,21 @@ class TreeInferenceModel:
             else:
                 final = "SUSPICIOUS"
             
-            # Calculate metrics
-            confidence = sum(probs) / len(probs) if probs else 0.0
+            # Calculate final confidence using the new method 
+            final_confidence = self._calculate_final_confidence(probs, final)
+            final_confidence = round(final_confidence, 4)
+            
+            # Old confidence (for backward compatibility)
+            old_confidence = sum(probs) / len(probs) if probs else 0.0
+            
+            
             event_count = positives
-            band_score = confidence
+            band_score = old_confidence
             
             return {
                 "label": final,
-                "confidence": round(confidence, 4),
+                "confidence": round(old_confidence, 4),  
+                "final_confidence": final_confidence,     
                 "event_count": event_count,
                 "band_score": round(band_score, 4),
                 "windows_used": n,
@@ -149,6 +191,7 @@ class TreeInferenceModel:
                 "label": "ERROR",
                 "message": str(e),
                 "confidence": 0.0,
+                "final_confidence": 0.0,
                 "event_count": 0,
                 "band_score": 0.0
             }

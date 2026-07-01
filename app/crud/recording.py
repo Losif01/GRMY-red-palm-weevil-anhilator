@@ -23,11 +23,11 @@ def get_recording_by_id(db: Session, recording_uid: uuid.UUID) -> Recording | No
         Recording.recording_uid == str(recording_uid)  
     ).first()
 
-# Get all recordings for a specific tree
+# Get all recordings for a specific tree (ordered by newest first)
 def get_tree_recordings(db: Session, tree_uid: uuid.UUID, skip: int = 0, limit: int = 100) -> list[Recording]:
     return db.query(Recording).filter(
         Recording.tree_id == str(tree_uid)  
-    ).offset(skip).limit(limit).all()
+    ).order_by(Recording.created_at.desc()).offset(skip).limit(limit).all()
 
 # Update recording with AI prediction results
 def update_recording_prediction(

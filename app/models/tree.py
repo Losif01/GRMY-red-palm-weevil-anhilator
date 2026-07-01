@@ -61,4 +61,4 @@ class Tree(Base):
     owner = relationship("User", back_populates="trees")
     group = relationship("TreeGroup", back_populates="trees")
     recordings = relationship("Recording", back_populates="tree", cascade="all, delete-orphan")
-    notifications = relationship("Notification", back_populates="tree")
+    notifications = relationship("Notification", back_populates="tree",cascade="all, delete-orphan")
